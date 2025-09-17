@@ -62,10 +62,10 @@ const VENUES = [
   { name: 'ศูนย์ DREAM Maker Space @โรงเรียนอัสสัมชัญ', url: 'https://maps.app.goo.gl/YWmYkq8vHaWsAeyN9' },
 ];
 
-// Minimal schedule (keep it short to save tokens)
+// Minimal schedule 
 const SCHEDULE_SUMMARY = 'Workshop 1–3 ต.ค. 2568, Launch 6–10 ต.ค. 2568 @ วังจันทร์วัลเลย์';
 
-// ===== Knowledge Base (Thai-first) =====
+// ===== Knowledge Base =====
 const KB = [
   {
     keys: ['ค่ายคืออะไร', 'เกี่ยวกับค่าย', 'about', 'rocketcamp', 'rocket camp'],
@@ -113,7 +113,7 @@ function findKBAnswer(q) {
   return null;
 }
 
-// ===== Embeds (used by ! commands) =====
+// ===== Embeds  =====
 function makeOverviewEmbed() {
   return new EmbedBuilder()
     .setTitle('🚀 AC x KMUTT Rocket Camp 2025 — Operated by DTI')
@@ -173,7 +173,7 @@ async function callGemini(prompt) {
         topP: 0.9,
         topK: 40
       }
-      // safetySettings: [] // add if you need
+      // safetySettings: 
     };
 
     const resp = await fetch(endpoint, {
@@ -189,7 +189,7 @@ async function callGemini(prompt) {
     return text || 'ไม่มีข้อมูล';
   }
 
-  // Generic custom endpoint (if you ever use one)
+  // Generic custom endpoint 
   if (!GENERIC_ENDPOINT) throw new Error('Generic endpoint not set');
   const resp = await fetch(GENERIC_ENDPOINT, {
     method: 'POST',
@@ -202,8 +202,8 @@ async function callGemini(prompt) {
 }
 
 // ===== Rate limiting =====
-const perUserCooldown = new Map();   // key: `${channelId}:${userId}` -> timestamp
-const perChannelBuckets = new Map(); // key: channelId -> { count, windowStartMs }
+const perUserCooldown = new Map();   
+const perChannelBuckets = new Map(); 
 
 function canReply(channelId, userId) {
   const now = Date.now();
@@ -244,13 +244,11 @@ function looksLikeQuestionStrict(text) {
 }
 
 function shouldAutoReply(content, wasMentioned) {
-  if (wasMentioned) return true; // always reply if bot is mentioned
+  if (wasMentioned) return true; 
   if (AUTO_MODE === 'strict') return looksLikeQuestionStrict(content);
-  // loose: reply to most sensible non-empty lines (avoid pure emojis/1-char)
   const t = (content || '').trim();
   if (!t) return false;
   if (t.length <= 2) return false;
-  // if it has letters/numbers or Thai chars, allow
   return looksLikeQuestionStrict(t) || /[A-Za-zก-ฮ0-9]/.test(t);
 }
 
@@ -260,20 +258,19 @@ client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
     const type = message.channel?.type;
-    // Allow common text surfaces
     const textlike = [
       ChannelType.GuildText,
       ChannelType.PublicThread,
       ChannelType.PrivateThread,
       ChannelType.AnnouncementThread,
       ChannelType.GuildAnnouncement,
-      ChannelType.GuildForum // forum posts create threads; message is in a thread
+      ChannelType.GuildForum 
     ];
     if (!textlike.includes(type)) return;
 
     const content = message.content || '';
 
-    // ----- Commands (prefix !) -----
+    // ----- Commands -----
     if (content.startsWith(PREFIX)) {
       const args = content.slice(PREFIX.length).trim().split(/\s+/);
       const cmd = (args.shift() || '').toLowerCase();
@@ -310,7 +307,6 @@ client.on('messageCreate', async (message) => {
         const q = args.join(' ');
         if (!q) return message.reply(`ใช้: \`${PREFIX}ask <คำถาม>\``);
 
-        // KB first (free)
         const kb = findKBAnswer(q);
         if (kb) return message.reply(truncate(kb, 1900));
 
@@ -325,8 +321,6 @@ client.on('messageCreate', async (message) => {
           return message.reply('⚠️ เรียก Gemini ไม่สำเร็จ');
         }
       }
-
-      // unknown command ignored
       return;
     }
 
@@ -338,11 +332,9 @@ client.on('messageCreate', async (message) => {
 
     await message.channel.sendTyping();
 
-    // 1) KB (free)
     const kbAns = findKBAnswer(content);
     if (kbAns) return message.reply(truncate(kbAns, 1900));
 
-    // 2) Gemini (paid/free quota) — only if key exists
     if (GEMINI_API_KEY) {
       const ctx = buildGeminiContext(content);
       try {
@@ -350,11 +342,10 @@ client.on('messageCreate', async (message) => {
         return message.reply(truncate(llm, 1900));
       } catch (e) {
         console.error('Gemini error:', e);
-        // fall through
+
       }
     }
 
-    // 3) Fallback (no LLM)
     return message.reply(
       `ขอบคุณสำหรับคำถาม 🙌 ลองใช้คำสั่ง: \`${PREFIX}rocketcamp\`, \`${PREFIX}price\`, \`${PREFIX}apply\`, \`${PREFIX}contact\``
     );
@@ -364,5 +355,4 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// ===== START =====
 client.login(TOKEN);
