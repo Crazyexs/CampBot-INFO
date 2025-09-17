@@ -124,6 +124,3 @@ Build and run:
 docker build -t rocketcamp-bot .
 docker run --env-file .env --name rocketcamp-bot --restart unless-stopped rocketcamp-bot
 ```
-
----
-
