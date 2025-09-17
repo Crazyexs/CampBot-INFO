@@ -7,15 +7,18 @@ const fetch = global.fetch ?? require('node-fetch');
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = process.env.PREFIX || '!';
 const AUTO_REPLY = (process.env.AUTO_REPLY || 'off').toLowerCase() === 'on';
-const ALLOWED_CHANNELS = (process.env.AUTO_REPLY_CHANNELS || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
-const COOLDOWN_S = Number(process.env.AUTO_REPLY_COOLDOWN_SECONDS || 15);
-const MAX_PER_MIN = Number(process.env.AUTO_REPLY_MAX_PER_MIN || 12);
+const ALLOWED_CHANNELS = (process.env.AUTO_REPLY_CHANNELS || '').split(',').map(s => s.trim()).filter(Boolean);
+const AUTO_MODE = (process.env.AUTO_REPLY_MODE || 'loose').toLowerCase(); // 'loose' | 'strict'
+const COOLDOWN_S = Number(process.env.AUTO_REPLY_COOLDOWN_SECONDS || 10);
+const MAX_PER_MIN = Number(process.env.AUTO_REPLY_MAX_PER_MIN || 10);
 const USE_THREADS = (process.env.AUTO_REPLY_USE_THREADS || 'off').toLowerCase() === 'on';
+const DEBUG = (process.env.DEBUG || 'off').toLowerCase() === 'on';
 
 const GEMINI_PROVIDER = (process.env.GEMINI_PROVIDER || 'google').toLowerCase();
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const GEMINI_MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 256);
+const GEMINI_MAX_INPUT_CHARS = Number(process.env.GEMINI_MAX_INPUT_CHARS || 3500);
 const GENERIC_ENDPOINT = process.env.GEMINI_ENDPOINT || '';
 
 if (!TOKEN) {
@@ -25,20 +28,16 @@ if (!TOKEN) {
 
 // ===== DISCORD CLIENT =====
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [ GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent ],
 });
 
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  console.log(`🤖 Auto-reply: ${AUTO_REPLY ? 'ON' : 'OFF'}`);
+  console.log(`🤖 Auto-reply: ${AUTO_REPLY ? 'ON' : 'OFF'} (${AUTO_MODE})`);
   console.log(`📺 Allowed channels: ${ALLOWED_CHANNELS.length ? ALLOWED_CHANNELS.join(', ') : 'ALL'}`);
 });
 
-// ===== ROCKET CAMP DATA (edit as needed) =====
+// ===== CAMP DATA (edit as needed) =====
 const CAMP = {
   title: 'AC x KMUTT Rocket Camp 2025 — Operated by DTI',
   desc: [
@@ -63,22 +62,10 @@ const VENUES = [
   { name: 'ศูนย์ DREAM Maker Space @โรงเรียนอัสสัมชัญ', url: 'https://maps.app.goo.gl/YWmYkq8vHaWsAeyN9' },
 ];
 
-const SCHEDULE = {
-  workshop: [
-    { date: '1/10/2568', items: ['07:30 ลงทะเบียน', '08:00–12:00 Fundamental of Rocket (DTI)', '13:00–16:00 ร่มชูชีพ / 3D / OpenRocket', '16:00 ปิดฐาน'] },
-    { date: '2/10/2568', items: ['07:30 ลงทะเบียน', '08:00–12:00 ครีบ/วงจร/โค้ดควบคุม', '13:00–16:00 ภายในจรวด (KMUTT) / วงจร / โค้ด', '16:00 ปิดฐาน'] },
-    { date: '3/10/2568', items: ['07:30 ลงทะเบียน', '08:00–12:00 Deployment (KMUTT) / ขับเคลื่อน&วัตถุระเบิด (DTI)', '13:00–15:00 ความปลอดภัย', '15:00 ปิดฐาน'] },
-  ],
-  launch: [
-    { date: '6/10/2568', items: ['เดินทางไปวังจันทร์ฯ', 'เปิดค่าย/ชี้แจง', 'นำเสนอแบบ & ติดตั้ง Deploy'] },
-    { date: '7/10/2568', items: ['ทดสอบ Deploy', 'ประกอบ/ตรวจจรวด', 'สันทนาการ'] },
-    { date: '8/10/2568', items: ['ทดสอบภาคพลวัต & เก็บกู้ ทั้งวัน'] },
-    { date: '9/10/2568', items: ['ทดสอบภาคพลวัต (ต่อ)', 'After Party'] },
-    { date: '10/10/2568', items: ['สำรองทดสอบ / พิธีปิด / เดินทางกลับ'] },
-  ],
-};
+// Minimal schedule (keep it short to save tokens)
+const SCHEDULE_SUMMARY = 'Workshop 1–3 ต.ค. 2568, Launch 6–10 ต.ค. 2568 @ วังจันทร์วัลเลย์';
 
-// ===== Knowledge Base =====
+// ===== Knowledge Base (Thai-first) =====
 const KB = [
   {
     keys: ['ค่ายคืออะไร', 'เกี่ยวกับค่าย', 'about', 'rocketcamp', 'rocket camp'],
@@ -87,9 +74,7 @@ const KB = [
       CAMP.desc,
       `📍 ${CAMP.where1}`,
       `📍 ${CAMP.where2}`,
-      '📝 สมัครเดี่ยว/ทีม:\n' +
-      `• เดี่ยว: ${CAMP.forms.individual}\n` +
-      `• ทีม: ${CAMP.forms.team}`,
+      `📝 สมัคร: เดี่ยว ${CAMP.forms.individual} | ทีม ${CAMP.forms.team}`,
     ].join('\n'),
   },
   {
@@ -98,12 +83,12 @@ const KB = [
       [
         '💰 **ค่าสมัคร / Pricing**',
         `• Spectator: **${CAMP.pricing.spectator.toLocaleString()}** บาท`,
-        `• สมัครเดี่ยว: **${CAMP.pricing.individual.toLocaleString()}** บาท`,
-        `• สมัครทีม (5–7 คน): **${CAMP.pricing.team.toLocaleString()}** บาท`,
+        `• เดี่ยว: **${CAMP.pricing.individual.toLocaleString()}** บาท`,
+        `• ทีม (5–7 คน): **${CAMP.pricing.team.toLocaleString()}** บาท`,
       ].join('\n'),
   },
   {
-    keys: ['สมัคร', 'apply', 'form', 'ลงทะเบียน', 'register', 'registration'],
+    keys: ['สมัคร', 'apply', 'form', 'ลงทะเบียน', 'register'],
     answer: () => `📝 เดี่ยว: ${CAMP.forms.individual}\n👥 ทีม: ${CAMP.forms.team}`,
   },
   {
@@ -115,16 +100,8 @@ const KB = [
     answer: () => VENUES.map(v => `• ${v.name}: ${v.url}`).join('\n'),
   },
   {
-    keys: ['ตาราง', 'กำหนดการ', 'schedule', 'workshop', 'launch', 'วันไหน'],
-    answer: () =>
-      [
-        '📆 **กำหนดการ (ย่อ)**',
-        '— Workshop 1–3 ต.ค. 2568:',
-        ...SCHEDULE.workshop.map(d => `• ${d.date}: ${d.items.join(' | ')}`),
-        '— Launch 6–10 ต.ค. 2568:',
-        ...SCHEDULE.launch.map(d => `• ${d.date}: ${d.items.join(' | ')}`),
-        `พิมพ์ \`${PREFIX}schedule workshop\` หรือ \`${PREFIX}schedule launch\` เพื่อดูละเอียด`,
-      ].join('\n'),
+    keys: ['ตาราง', 'กำหนดการ', 'schedule', 'วันไหน', 'launch', 'workshop'],
+    answer: () => `📆 กำหนดการย่อ: ${SCHEDULE_SUMMARY}\nพิมพ์ \`${PREFIX}rocketcamp\` เพื่อดูภาพรวม`,
   },
 ];
 
@@ -136,7 +113,7 @@ function findKBAnswer(q) {
   return null;
 }
 
-// ===== Embeds (for commands) =====
+// ===== Embeds (used by ! commands) =====
 function makeOverviewEmbed() {
   return new EmbedBuilder()
     .setTitle('🚀 AC x KMUTT Rocket Camp 2025 — Operated by DTI')
@@ -149,21 +126,37 @@ function makeOverviewEmbed() {
     .setFooter({ text: 'สอบถาม: LINE OA @spaceac | Facebook: go.spaceac.tech/facebook' });
 }
 
-function makeScheduleEmbed(kind) {
-  const data = kind === 'launch' ? SCHEDULE.launch : SCHEDULE.workshop;
-  const title = kind === 'launch' ? '📆 Launch Week (6–10 ต.ค. 2568)' : '📆 Workshop Week (1–3 ต.ค. 2568)';
-  const embed = new EmbedBuilder().setTitle(title);
-  data.forEach(day => embed.addFields({ name: `• ${day.date}`, value: day.items.map(x => `- ${x}`).join('\n') }));
-  return embed;
-}
-
 function makeVenueEmbed() {
   return new EmbedBuilder()
     .setTitle('🗺️ สถานที่ / Venues')
     .setDescription(VENUES.map(v => `• [${v.name}](${v.url})`).join('\n'));
 }
 
-// ===== Gemini (optional) =====
+// ===== Utils =====
+function debugLog(...args) { if (DEBUG) console.log('[DBG]', ...args); }
+
+function truncate(str, limit) {
+  if (!str) return '';
+  if (str.length <= limit) return str;
+  return str.slice(0, limit - 12) + '\n...[truncated]';
+}
+
+function buildGeminiContext(question) {
+  const parts = [
+    'You are the info bot for "AC x KMUTT Rocket Camp 2025 — Operated by DTI".',
+    'Answer in Thai, concise and accurate. Use short bullet points when appropriate.',
+    `Overview:\n${CAMP.desc}`,
+    `Venues:\n- ${VENUES[0].name}: ${VENUES[0].url}`,
+    `Pricing: spectator ${CAMP.pricing.spectator} THB, individual ${CAMP.pricing.individual} THB, team ${CAMP.pricing.team} THB`,
+    `Apply: individual ${CAMP.forms.individual} | team ${CAMP.forms.team}`,
+    `Schedule (short): ${SCHEDULE_SUMMARY}`,
+    `Question: ${question}`,
+  ].join('\n');
+
+  return truncate(parts, GEMINI_MAX_INPUT_CHARS);
+}
+
+// ===== Gemini (token-limited) =====
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) throw new Error('Gemini not configured');
 
@@ -172,12 +165,23 @@ async function callGemini(prompt) {
       GEMINI_MODEL
     )}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
 
-    const body = { contents: [{ parts: [{ text: prompt }] }] };
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, // limit output tokens
+        temperature: 0.2,
+        topP: 0.9,
+        topK: 40
+      }
+      // safetySettings: [] // add if you need
+    };
+
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+
     if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}: ${await resp.text().catch(() => '<no body>')}`);
     const json = await resp.json();
     const parts = json.candidates?.[0]?.content?.parts || [];
@@ -185,62 +189,91 @@ async function callGemini(prompt) {
     return text || 'ไม่มีข้อมูล';
   }
 
+  // Generic custom endpoint (if you ever use one)
   if (!GENERIC_ENDPOINT) throw new Error('Generic endpoint not set');
   const resp = await fetch(GENERIC_ENDPOINT, {
     method: 'POST',
     headers: { Authorization: `Bearer ${GEMINI_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, max_tokens: GEMINI_MAX_OUTPUT_TOKENS, temperature: 0.2 }),
   });
   if (!resp.ok) throw new Error(`LLM HTTP ${resp.status}: ${await resp.text().catch(() => '<no body>')}`);
   const json = await resp.json();
-  if (typeof json.text === 'string') return json.text;
-  if (typeof json.output === 'string') return json.output;
-  if (Array.isArray(json.outputs) && json.outputs[0]?.text) return json.outputs[0].text;
-  return JSON.stringify(json, null, 2);
+  return json.text || json.output || JSON.stringify(json);
 }
 
 // ===== Rate limiting =====
-const perUserCooldown = new Map();           // key: `${channelId}:${userId}` -> timestamp
-const perChannelBuckets = new Map();         // key: channelId -> { count, windowStartMs }
+const perUserCooldown = new Map();   // key: `${channelId}:${userId}` -> timestamp
+const perChannelBuckets = new Map(); // key: channelId -> { count, windowStartMs }
 
 function canReply(channelId, userId) {
   const now = Date.now();
+
   const key = `${channelId}:${userId}`;
   const last = perUserCooldown.get(key) || 0;
   if (now - last < COOLDOWN_S * 1000) return false;
 
-  let bucket = perChannelBuckets.get(channelId);
-  if (!bucket || now - bucket.windowStartMs > 60_000) {
-    bucket = { count: 0, windowStartMs: now };
+  let b = perChannelBuckets.get(channelId);
+  if (!b || now - b.windowStartMs > 60_000) {
+    b = { count: 0, windowStartMs: now };
   }
-  if (bucket.count >= MAX_PER_MIN) return false;
+  if (b.count >= MAX_PER_MIN) return false;
 
   perUserCooldown.set(key, now);
-  bucket.count += 1;
-  perChannelBuckets.set(channelId, bucket);
+  b.count += 1;
+  perChannelBuckets.set(channelId, b);
   return true;
 }
 
-// ===== Auto-reply gate =====
-function allowedChannel(channel) {
+// ===== Auto-reply gates =====
+function channelAllowed(channel) {
   if (!AUTO_REPLY) return false;
   if (!ALLOWED_CHANNELS.length) return true;
   return ALLOWED_CHANNELS.includes(channel.id);
 }
 
-function looksLikeAQuestion(text) {
-  const t = (text || '').trim().toLowerCase();
-  return /[?？]$/.test(t) ||
-         /(ราคา|ค่าสมัคร|สมัคร|ตาราง|กำหนดการ|ที่ไหน|วังจันทร์|kmutt|dti|space\s?ac|rocket|จรวด|camp|register|price|where|when|how)/i.test(t);
+function isMentioningBot(message) {
+  try {
+    return message.mentions?.users?.has(client.user.id);
+  } catch { return false; }
 }
 
-// ===== Message handler (commands + auto) =====
+function looksLikeQuestionStrict(text) {
+  const t = (text || '').trim().toLowerCase();
+  return /[?？]$/.test(t) ||
+    /(ราคา|ค่าสมัคร|สมัคร|ตาราง|กำหนดการ|ที่ไหน|ติดต่อ|line|facebook|วังจันทร์|kmutt|dti|space\s?ac|rocket|จรวด|camp|register|price|where|when|how)/i.test(t);
+}
+
+function shouldAutoReply(content, wasMentioned) {
+  if (wasMentioned) return true; // always reply if bot is mentioned
+  if (AUTO_MODE === 'strict') return looksLikeQuestionStrict(content);
+  // loose: reply to most sensible non-empty lines (avoid pure emojis/1-char)
+  const t = (content || '').trim();
+  if (!t) return false;
+  if (t.length <= 2) return false;
+  // if it has letters/numbers or Thai chars, allow
+  return looksLikeQuestionStrict(t) || /[A-Za-zก-ฮ0-9]/.test(t);
+}
+
+// ===== Commands + Auto-reply =====
 client.on('messageCreate', async (message) => {
   try {
     if (message.author.bot) return;
+
+    const type = message.channel?.type;
+    // Allow common text surfaces
+    const textlike = [
+      ChannelType.GuildText,
+      ChannelType.PublicThread,
+      ChannelType.PrivateThread,
+      ChannelType.AnnouncementThread,
+      ChannelType.GuildAnnouncement,
+      ChannelType.GuildForum // forum posts create threads; message is in a thread
+    ];
+    if (!textlike.includes(type)) return;
+
     const content = message.content || '';
 
-    // ----- Commands (prefix) -----
+    // ----- Commands (prefix !) -----
     if (content.startsWith(PREFIX)) {
       const args = content.slice(PREFIX.length).trim().split(/\s+/);
       const cmd = (args.shift() || '').toLowerCase();
@@ -250,24 +283,16 @@ client.on('messageCreate', async (message) => {
           [
             'คำสั่ง:',
             `• \`${PREFIX}rocketcamp\` — ภาพรวมค่าย`,
-            `• \`${PREFIX}schedule workshop|launch\` — ตารางกิจกรรม`,
             `• \`${PREFIX}price\` — ค่าสมัคร`,
             `• \`${PREFIX}apply\` — สมัคร`,
             `• \`${PREFIX}contact\` — ติดต่อ`,
             `• \`${PREFIX}venue\` — สถานที่/แผนที่`,
-            `• \`${PREFIX}ask <คำถาม>\` — ถาม AI (ต้องตั้งค่า Gemini)`,
+            `• \`${PREFIX}ask <คำถาม>\` — ถาม AI (ใช้ Gemini; โหมดประหยัดโควต้า)`,
           ].join('\n')
         );
       }
 
       if (cmd === 'rocketcamp') return message.channel.send({ embeds: [makeOverviewEmbed()] });
-      if (cmd === 'schedule') {
-        const sub = (args[0] || '').toLowerCase();
-        if (!['workshop', 'launch'].includes(sub)) {
-          return message.reply(`ใช้: \`${PREFIX}schedule workshop\` หรือ \`${PREFIX}schedule launch\``);
-        }
-        return message.channel.send({ embeds: [makeScheduleEmbed(sub)] });
-      }
       if (cmd === 'price') {
         return message.reply(
           `💰 ค่าสมัคร:\n- Spectator: ${CAMP.pricing.spectator} บาท\n- เดี่ยว: ${CAMP.pricing.individual} บาท\n- ทีม (5–7 คน): ${CAMP.pricing.team} บาท`
@@ -285,23 +310,16 @@ client.on('messageCreate', async (message) => {
         const q = args.join(' ');
         if (!q) return message.reply(`ใช้: \`${PREFIX}ask <คำถาม>\``);
 
-        // KB first
+        // KB first (free)
         const kb = findKBAnswer(q);
-        if (kb) return message.reply(kb.length > 1900 ? kb.slice(0, 1900) + '\n...[truncated]' : kb);
+        if (kb) return message.reply(truncate(kb, 1900));
 
         if (!GEMINI_API_KEY) return message.reply('❌ ยังไม่ตั้งค่า Gemini ใน .env');
         await message.channel.sendTyping();
         try {
-          const context = [
-            'Answer in Thai about AC x KMUTT Rocket Camp 2025.',
-            CAMP.desc,
-            `สถานที่: ${CAMP.where1} | ${CAMP.where2}`,
-            `ค่าสมัคร: spectator ${CAMP.pricing.spectator} THB, individual ${CAMP.pricing.individual} THB, team ${CAMP.pricing.team} THB`,
-            `ลิงก์สมัคร: ${CAMP.forms.individual} | ${CAMP.forms.team}`,
-            `คำถาม: ${q}`
-          ].join('\n');
-          const ans = await callGemini(context);
-          return message.reply(ans.slice(0, 1900));
+          const ctx = buildGeminiContext(q);
+          const ans = await callGemini(ctx);
+          return message.reply(truncate(ans, 1900));
         } catch (e) {
           console.error('Gemini error:', e);
           return message.reply('⚠️ เรียก Gemini ไม่สำเร็จ');
@@ -313,42 +331,34 @@ client.on('messageCreate', async (message) => {
     }
 
     // ----- Auto-reply (no prefix) -----
-    if (!allowedChannel(message.channel)) return;
-    if (!looksLikeAQuestion(content)) return;
-    if (!canReply(message.channel.id, message.author.id)) return;
+    if (!channelAllowed(message.channel)) { debugLog('skip: channel not allowed'); return; }
+    const mentioned = isMentioningBot(message);
+    if (!shouldAutoReply(content, mentioned)) { debugLog('skip: gate not matched'); return; }
+    if (!canReply(message.channel.id, message.author.id)) { debugLog('skip: rate limit'); return; }
 
     await message.channel.sendTyping();
 
-    // KB first
+    // 1) KB (free)
     const kbAns = findKBAnswer(content);
-    let replyText = kbAns;
-    if (!replyText && GEMINI_API_KEY) {
-      const context = [
-        'Answer in Thai about AC x KMUTT Rocket Camp 2025.',
-        CAMP.desc,
-        `สถานที่: ${CAMP.where1} | ${CAMP.where2}`,
-        `ค่าสมัคร: spectator ${CAMP.pricing.spectator} THB, individual ${CAMP.pricing.individual} THB, team ${CAMP.pricing.team} THB`,
-        `ลิงก์สมัคร: ${CAMP.forms.individual} | ${CAMP.forms.team}`,
-        `คำถามผู้ใช้: ${content}`
-      ].join('\n');
+    if (kbAns) return message.reply(truncate(kbAns, 1900));
+
+    // 2) Gemini (paid/free quota) — only if key exists
+    if (GEMINI_API_KEY) {
+      const ctx = buildGeminiContext(content);
       try {
-        replyText = await callGemini(context);
+        const llm = await callGemini(ctx);
+        return message.reply(truncate(llm, 1900));
       } catch (e) {
         console.error('Gemini error:', e);
+        // fall through
       }
     }
-    if (!replyText) {
-      replyText = `ขอบคุณสำหรับคำถาม 🙌 ลองใช้คำสั่ง: \`${PREFIX}rocketcamp\`, \`${PREFIX}schedule workshop|launch\`, \`${PREFIX}price\`, \`${PREFIX}apply\``;
-    }
 
-    const safe = replyText.length > 1900 ? replyText.slice(0, 1900) + '\n...[truncated]' : replyText;
+    // 3) Fallback (no LLM)
+    return message.reply(
+      `ขอบคุณสำหรับคำถาม 🙌 ลองใช้คำสั่ง: \`${PREFIX}rocketcamp\`, \`${PREFIX}price\`, \`${PREFIX}apply\`, \`${PREFIX}contact\``
+    );
 
-    if (USE_THREADS && message.channel.type === ChannelType.GuildText) {
-      const threadName = `Q&A: ${message.author.username}`.slice(0, 80);
-      const thread = await message.startThread({ name: threadName, autoArchiveDuration: 60 }).catch(() => null);
-      if (thread) return thread.send(safe);
-    }
-    return message.reply(safe);
   } catch (err) {
     console.error('Handler error:', err);
   }
