@@ -619,6 +619,7 @@ client.on("messageCreate", async (message) => {
         }
 
         return; 
+      }
 
       // ---------- Legacy admin-lite----------
       if (!ADMIN_IDS.size || ADMIN_IDS.has(userId)) {
@@ -674,10 +675,10 @@ client.on("messageCreate", async (message) => {
         }
       }
 
-      return;
+      return; 
     }
 
-    // ---------- Auto-reply----------
+    // ---------- Auto-reply ----------
     if (!channelAllowed(message.channel)) { dlog("skip: channel not allowed"); return; }
     if (!canReply(message.channel.id, message.author.id)) { dlog("skip: rate limit"); return; }
     if (AUTO_MODE !== "all" && !content.trim()) { dlog("skip: empty"); return; }
@@ -723,5 +724,6 @@ client.on("messageCreate", async (message) => {
     console.error("Handler error:", err);
   }
 });
+
 
 client.login(TOKEN);
